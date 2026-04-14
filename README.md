@@ -124,16 +124,7 @@ src/
 
 ## 🔄 Архитектура и взаимодействие
 
-Vue и Phaser общаются через **события игры** и **registry**:
-
-```
-┌─────────────────┐   game:over / game:turn    ┌──────────────────┐
-│  Phaser Scene   │ ─────────────────────────► │  Vue (GameView)  │
-│ TicTacToeScene  │                            │                  │
-│                 │ ◄───────────────────────── │  Pinia store     │
-└─────────────────┘   registry: difficulty     └──────────────────┘
-                      game:restart
-```
+Vue и Phaser общаются через **события игры** (`game.events`) и **registry** (`game.registry`).
 
 - **`GameEvents.GameOver`** — сцена сообщает об итоге партии → Vue начисляет награду и открывает модалку.
 - **`GameEvents.TurnChange`** — обновляет `TurnIndicator`.
@@ -141,6 +132,117 @@ Vue и Phaser общаются через **события игры** и **regis
 - **`RegistryKeys.Difficulty`** — Vue пишет выбранную сложность в Phaser registry.
 
 Прогресс (кристаллы, W/D/L, серии, сложность) сохраняется в `localStorage` под ключом `tictactoe:state:v1`.
+
+### 🧩 Диаграмма классов (UML)
+
+```mermaid
+classDiagram
+    class GameView {
+        +host: HTMLDivElement
+        +game: Phaser.Game
+        +turn: Turn
+        +modalOpen: boolean
+        +handleGameOver(result)
+        +handleTurn(next)
+        +restart()
+    }
+
+    class GameStore {
+        +crystals: number
+        +wins: number
+        +draws: number
+        +losses: number
+        +currentStreak: number
+        +bestStreak: number
+        +difficulty: Difficulty
+        +registerOutcome(outcome) RewardInfo
+        +setDifficulty(d)
+        +resetStats()
+    }
+
+    class TicTacToeScene {
+        -board: Board
+        -isLocked: boolean
+        +create()
+        -handlePlayerClick(index)
+        -aiMove()
+        -chooseAIMove(board) number
+        -minimax(board, depth, isMax, α, β) number
+        -evaluateBoard() GameResult
+        -finishGame(result)
+        -resetBoard()
+    }
+
+    class PhaserGame {
+        +events: EventEmitter
+        +registry: DataManager
+        +destroy()
+    }
+
+    class GameEvents {
+        <<enumeration>>
+        GameOver
+        Restart
+        TurnChange
+    }
+
+    class Components {
+        <<module>>
+        GameHeader
+        DifficultySelector
+        TurnIndicator
+        ResultModal
+    }
+
+    GameView --> PhaserGame : creates
+    GameView --> GameStore : uses
+    GameView --> Components : renders
+    PhaserGame *-- TicTacToeScene : scene
+    TicTacToeScene ..> GameEvents : emits/listens
+    GameView ..> GameEvents : emits/listens
+    GameStore ..> localStorage : persists
+```
+
+### ⏱ Последовательность одного хода (Sequence)
+
+```mermaid
+sequenceDiagram
+    actor Player as 👤 Игрок
+    participant Scene as TicTacToeScene
+    participant PhaserEvt as Phaser.events
+    participant View as GameView.vue
+    participant Store as Pinia Store
+    participant Modal as ResultModal
+
+    Player->>Scene: click по клетке
+    Scene->>Scene: placeMark(index, 'X')
+    Scene->>Scene: evaluateBoard()
+
+    alt Партия продолжается
+        Scene->>PhaserEvt: emit TurnChange('ai')
+        PhaserEvt->>View: turn = 'ai'
+        Note over Scene: задержка 450 мс
+        Scene->>Scene: aiMove() [minimax / rules / random]
+        Scene->>Scene: evaluateBoard()
+        Scene->>PhaserEvt: emit TurnChange('player')
+        PhaserEvt->>View: turn = 'player'
+    else Есть победитель / ничья
+        Scene->>Scene: drawWinLine() + celebrate/shake
+        Note over Scene: задержка 900 мс
+        Scene->>PhaserEvt: emit GameOver(result)
+        PhaserEvt->>View: handleGameOver(result)
+        View->>Store: registerOutcome(outcome)
+        Store->>Store: обновить stats + начислить 💎
+        Store-->>View: RewardInfo
+        View->>Modal: open = true
+        Modal-->>Player: показать результат и кнопку
+
+        Player->>Modal: click «Играть снова»
+        Modal->>View: emit restart
+        View->>PhaserEvt: emit Restart
+        PhaserEvt->>Scene: resetBoard()
+    end
+```
 
 ---
 
